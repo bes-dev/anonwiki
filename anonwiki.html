@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>AnonWiki — private PGP wiki + offline search with snippets</title>
+  <link rel="icon" href="data:image/png;base64,iVBORw0KGgo=">
+  <style>
+    :root{--p:#3498db;--p2:#2980b9;--bg:#f8f9fc;--txt:#333;--border:#e0e0e0}
+    *{box-sizing:border-box;margin:0;padding:0;font-family:Segoe UI,Tahoma,Geneva,Verdana,sans-serif}
+    body{display:flex;flex-direction:column;min-height:100vh;background:var(--bg);color:var(--txt)}
+
+    /* Buttons */
+    .btn{background:var(--p2);color:#fff;border:0;padding:8px 14px;border-radius:4px;cursor:pointer;font-size:14px}
+    .btn--danger{background:#e74c3c}
+
+    /* Header */
+    header{height:60px;background:var(--p);color:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 20px}
+    .logo{font-size:1.5em;font-weight:700;cursor:pointer}
+    .header-buttons{display:flex;align-items:center;gap:10px}
+    #search-input{width:250px;padding:6px 8px;border:none;border-radius:4px;font-size:14px}
+
+    /* Layout */
+    .container{flex:1;display:flex}
+
+    /* Sidebar */
+    .sidebar{width:260px;background:#fff;padding:20px;overflow-y:auto}
+    .sidebar h3{margin-bottom:15px;color:var(--p);border-bottom:1px solid var(--border);padding-bottom:8px}
+    #tree ul{list-style:none;padding-left:18px}
+    #tree li{margin:4px 0;position:relative}
+    #tree li::before{content:'';position:absolute;top:11px;left:-12px;width:8px;height:1px;background:var(--border)}
+    .toggle{background:none;border:none;margin-right:4px;cursor:pointer}
+    .link{color:var(--txt);text-decoration:none}
+    .link:hover{color:var(--p)}
+
+    /* Main */
+    .main{flex:1;padding:20px;overflow-y:auto}
+    .box{background:#fff;border-radius:6px;padding:20px;margin-bottom:20px;box-shadow:0 2px 4px rgba(0,0,0,.05)}
+    .page-title{font-size:1.8em;color:var(--p)}
+
+    /* Article styling */
+    .wiki-content{max-width:860px;margin:0 auto;line-height:1.7;font-size:15px}
+    .wiki-content h1,.wiki-content h2,.wiki-content h3{color:var(--p);margin-top:1.4em;margin-bottom:.6em;scroll-margin-top:75px}
+    .wiki-content h1{font-size:2em;border-bottom:2px solid var(--border);padding-bottom:.3em}
+    .wiki-content h2{font-size:1.7em;border-bottom:1px solid var(--border);padding-bottom:.3em}
+    .wiki-content h3{font-size:1.4em}
+    .wiki-content p{margin-bottom:1.1em}
+    .wiki-content ul,.wiki-content ol{margin-bottom:1.1em;margin-left:1.4em;padding-left:.2em}
+    .wiki-content li{margin-bottom:.4em}
+    .wiki-content blockquote{border-left:4px solid var(--p);background:#f9fbff;padding:.6em 1em;font-style:italic;color:#555;margin:1.1em 0}
+    .wiki-content code{background:#f5f5f5;padding:2px 4px;border-radius:4px;font-family:Menlo,Consolas,monospace;font-size:13px}
+    .wiki-content pre{background:#272822;color:#f8f8f2;padding:1em;border-radius:6px;overflow:auto;font-size:13px;margin-bottom:1.2em}
+    .wiki-content pre code{background:transparent;padding:0}
+    .wiki-content table{border-collapse:collapse;width:100%;margin:1.2em 0;font-size:14px}
+    .wiki-content th,.wiki-content td{border:1px solid var(--border);padding:8px;text-align:left}
+    .wiki-content th{background:#f2f5fa;font-weight:600}
+    .wiki-content hr{border:0;border-top:1px solid var(--border);margin:1.6em 0}
+    .wiki-content img{max-width:100%;height:auto;border-radius:4px;margin:1em 0}
+
+    /* Editor */
+    .toolbar{display:flex;flex-wrap:wrap;margin-bottom:8px}
+    .toolbar button{background:#f0f0f0;border:1px solid #ddd;border-radius:3px;padding:5px 10px;font-size:12px;cursor:pointer;margin:4px}
+    .split{display:flex;gap:20px;min-height:400px}
+    textarea{flex:1;border:1px solid var(--border);border-radius:4px;padding:15px;font-family:monospace;font-size:14px;resize:vertical}
+    .md-preview{flex:1;border:1px solid var(--border);border-radius:4px;padding:15px;overflow:auto;background:#fff}
+    .edit-buttons{display:flex;justify-content:flex-end;margin-top:15px}
+    .edit-buttons button{margin-left:10px}
+    .fullscreen{position:fixed;inset:0;background:#fff;z-index:60;padding:20px;overflow:auto}
+    .fullscreen .split{height:calc(100vh - 180px)}
+
+    /* Modals */
+    .modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:70}
+    .modal.hidden{display:none}
+    .modal-box{background:#fff;border-radius:6px;padding:24px;max-width:800px;width:90%;max-height:90vh;overflow:auto}
+    .modal textarea,.modal input{width:100%;margin-top:6px;padding:8px;border:1px solid var(--border);border-radius:4px;font-size:14px;font-family:monospace}
+    .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+
+    /* Settings tabs */
+    .settings-tabs{display:flex;gap:8px;margin-bottom:12px}
+    .settings-tabs button{flex:1;background:#f0f0f0;color:#333;border:1px solid #ddd;padding:6px;font-size:13px;cursor:pointer}
+
+    /* Search drawer */
+    #search-drawer{position:fixed;top:60px;right:20px;width:320px;max-height:70vh;overflow:auto;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 8px rgba(0,0,0,.1);z-index:80;display:none}
+    #search-drawer ul{list-style:none;padding:10px}
+    #search-drawer li{margin-bottom:10px}
+    #search-drawer a{color:var(--p2);text-decoration:none}
+    #search-drawer a:hover{text-decoration:underline}
+    #search-drawer .empty{color:#777;font-style:italic}
+    mark{background:#fff3cd;padding:0 2px;border-radius:2px}
+
+    /* Footer */
+    footer{text-align:center;padding:15px;background:var(--p);color:#fff;font-size:13px}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo" id="logo">AnonWiki</div>
+    <div class="header-buttons">
+      <input id="search-input" placeholder="Search (Ctrl+K)" autocomplete="off">
+      <button id="new-btn" class="btn">New Page</button>
+      <button id="settings-btn" class="btn">Settings</button>
+      <button id="save-wiki" class="btn">Save Wiki</button>
+      <button id="block-btn" class="btn btn--danger">Block Wiki</button>
+    </div>
+  </header>
+
+  <div class="container">
+    <aside class="sidebar">
+      <h3>Pages</h3>
+      <nav id="tree"></nav>
+    </aside>
+
+    <main class="main">
+      <!-- View mode -->
+      <section id="view" class="box wiki-content">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <h1 id="view-title" class="page-title"></h1>
+          <div>
+            <button id="history-btn" class="btn">History</button>
+            <button id="edit-btn" class="btn">Edit</button>
+            <button id="delete-btn" class="btn btn--danger">Delete</button>
+          </div>
+        </div>
+        <article id="view-content"></article>
+      </section>
+
+      <!-- Edit mode -->
+      <section id="editor-box" class="box" style="display:none">
+        <input id="path-input" placeholder="path/to/page"
+               style="width:100%;font-size:1.1em;padding:6px 8px;margin-bottom:12px">
+        <div class="toolbar" id="toolbar"></div>
+        <div class="split">
+          <textarea id="editor"></textarea>
+          <div id="edit-preview" class="md-preview"></div>
+        </div>
+        <div class="edit-buttons">
+          <button id="fullscreen-btn" class="btn">★</button>
+          <button id="save-btn" class="btn">Save Page</button>
+          <button id="cancel-btn" class="btn">Cancel</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer>AnonWiki © 2025</footer>
+
+  <div id="search-drawer"><ul id="search-results"></ul></div>
+
+  <!-- Settings & PGP Key Management Modal -->
+  <div id="settings-modal" class="modal hidden">
+    <div class="modal-box">
+      <h2>Settings & PGP Key Management</h2>
+      <div class="settings-tabs">
+        <button id="tab-import">Import Public Key</button>
+        <button id="tab-gen">Generate Key Pair</button>
+      </div>
+      <div id="import-section">
+        <label>Public PGP key:<textarea id="settings-pubkey" rows="4"></textarea></label>
+      </div>
+      <div id="gen-section" style="display:none">
+        <label>Name/email:<input id="gen-uid" placeholder="User Name &lt;user@example.com&gt;"></label>
+        <label>Passphrase:<input id="gen-pass" type="password"></label>
+        <button id="gen-btn" class="btn">Generate Key Pair</button>
+        <div id="gen-result" style="margin-top:12px;display:none">
+          <label>Public Key:<textarea id="gen-pub" rows="4" readonly></textarea></label>
+          <label>Private Key:<textarea id="gen-priv" rows="4" readonly></textarea></label>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="settings-cancel">Cancel</button>
+        <button class="btn" id="settings-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- History Modal -->
+  <div id="history-modal" class="modal hidden">
+    <div class="modal-box">
+      <h2>Revision history</h2>
+      <div id="history-list" style="margin-top:12px;"></div>
+      <div class="modal-actions">
+        <button class="btn" id="history-close">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Initial wiki data -->
+  <script id="wiki-data" type="application/json">
+  {
+    "pages": [
+      {
+        "path": "welcome",
+        "title": "Welcome",
+        "history": [
+          {
+            "date": "2025-05-04T00:00:00Z",
+            "patch": null,
+            "snapshot": "# Welcome to AnonWiki\n\n(…)",
+            "msg": "Initial"
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+
+  <!-- External libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.3.0/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.1/dist/purify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lunr@2.3.9/lunr.min.js" onerror="window.lunrFail=true"></script>
+  <script src="https://cdn.jsdelivr.net/npm/openpgp@5.8.0/dist/openpgp.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/diff_match_patch/20121119/diff_match_patch.js"></script>
+
+  <script>
+    const $ = q => document.querySelector(q);
+    marked.setOptions({ gfm: true, breaks: true });
+
+    let wikiData = {}, pubArmor = '', pubKey = null;
+    let lunrAvailable = true, idx = null;
+    let currentPath = null, fileHandle = null;
+
+    async function loadEmbeddedPubKey() {
+      const pkScript = document.getElementById('wiki-pubkey');
+      if (pkScript) {
+        pubArmor = pkScript.textContent.trim();
+        try { pubKey = await openpgp.readKey({ armoredKey: pubArmor }); sessionStorage.setItem('pubArmor', pubArmor); }
+        catch { pubKey = null; }
+      } else {
+        pubArmor = sessionStorage.getItem('pubArmor') || '';
+        if (pubArmor) {
+          try { pubKey = await openpgp.readKey({ armoredKey: pubArmor }); }
+          catch { pubKey = null; }
+        }
+      }
+    }
+
+    const dmp = new diff_match_patch();
+    const makePatch = (o,n) => dmp.patch_toText(dmp.patch_make(o,n));
+    const applyPatch = (b,p) => dmp.patch_apply(dmp.patch_fromText(p), b)[0];
+    function contentFromHist(page, upTo = page.history.length-1) {
+      let t = '';
+      for (let i=0;i<=upTo;i++){
+        const h = page.history[i];
+        t = h.patch===null ? h.snapshot : applyPatch(t,h.patch);
+      }
+      return t;
+    }
+
+    function buildIndex() {
+      lunrAvailable = !window.lunrFail && typeof lunr==='function';
+      if(!lunrAvailable){ idx=null; return; }
+      idx = lunr(function(){
+        this.ref('path');
+        this.field('title');
+        this.field('body');
+        wikiData.pages.forEach(p=>
+          this.add({ path:p.path, title:p.title, body:contentFromHist(p) })
+        );
+      });
+    }
+
+    function makeSnippet(text,tokens,r=45){
+      const low=text.toLowerCase(); let pos=-1;
+      tokens.forEach(tok=>{const p=low.indexOf(tok); if(p!==-1&&(pos===-1||p<pos))pos=p;});
+      if(pos===-1) return '';
+      const start=Math.max(0,pos-r), end=Math.min(text.length,pos+tokens[0].length+r);
+      let sn=text.slice(start,end);
+      tokens.forEach(tok=>{
+        const re=new RegExp(tok.replace(/[.*+?^${}()|[\\]\\]/g,'\\$&'),'gi');
+        sn=sn.replace(re,m=>`<mark>${m}</mark>`);
+      });
+      if(start>0)sn='…'+sn;
+      if(end<text.length)sn+='…';
+      return DOMPurify.sanitize(sn);
+    }
+
+    function searchQuery(q){
+      const query=q.trim().toLowerCase();
+      if(!query) return [];
+      const tokens=query.split(/\s+/);
+      if(lunrAvailable){
+        try{
+          const refs=idx.search(tokens.map(t=>t+'*').join(' ')).map(r=>r.ref);
+          if(refs.length) return refs;
+        }catch{}
+      }
+      return wikiData.pages
+        .filter(p=>((p.title+' '+contentFromHist(p)).toLowerCase()).includes(query))
+        .map(p=>p.path);
+    }
+
+    function renderSearch(){
+      const dr=$('#search-drawer'), lst=$('#search-results');
+      lst.innerHTML='';
+      const q=$('#search-input').value.trim();
+      if(!q){ dr.style.display='none'; return; }
+      const tokens=q.toLowerCase().split(/\s+/), paths=searchQuery(q);
+      if(!paths.length){
+        const li=document.createElement('li');
+        li.className='empty'; li.textContent='No results'; lst.appendChild(li);
+      } else {
+        paths.forEach(path=>{
+          const pg=wikiData.pages.find(p=>p.path===path);
+          const plain=contentFromHist(pg).replace(/[`*_>#]/g,'');
+          const sn=makeSnippet(plain,tokens);
+          const li=document.createElement('li');
+          li.innerHTML=`<a href="#" style="font-weight:600">${pg.title}</a><div style="font-size:13px">${sn}</div>`;
+          li.querySelector('a').onclick=e=>{e.preventDefault();closeSearch();loadPage(path);};
+          lst.appendChild(li);
+        });
+      }
+      dr.style.display='block';
+    }
+    const closeSearch=()=>{ $('#search-input').value=''; $('#search-drawer').style.display='none'; };
+
+    function makeToolbar(){
+      const tb=$('#toolbar');
+      [['B','**$**'],['I','*$*'],['H2','## $'],['Link','[$](url)'],['Img','![$](url)'],
+       ['UL','- $'],['OL','1. $'],['Code','```\n$\n```'],['Quote','> $'],['HR','\n---\n']]
+        .forEach(([lbl,tpl])=>{
+          const b=document.createElement('button');
+          b.textContent=lbl; b.onclick=()=>ins(tpl); tb.appendChild(b);
+        });
+    }
+    function ins(tpl){
+      const ta=$('#editor'), s=ta.selectionStart, e=ta.selectionEnd;
+      ta.setRangeText(tpl.replace('$',ta.value.slice(s,e)||''),s,e,'end'); ta.focus(); updatePrev();
+    }
+    const updatePrev=()=>{ $('#edit-preview').innerHTML = DOMPurify.sanitize(marked.parse($('#editor').value)); };
+
+    function buildTree(){
+      const root={},nav=$('#tree'); nav.innerHTML='';
+      wikiData.pages.forEach(p=>{
+        p.path.split('/').reduce((n,part,i,arr)=>{
+          n.children=n.children||{}; n=n.children[part]=n.children[part]||{};
+          if(i===arr.length-1) n.page=p; return n;
+        },root);
+      });
+      (function rec(node,el){
+        const ul=document.createElement('ul'); el.appendChild(ul);
+        Object.keys(node.children||{}).sort().forEach(k=>{
+          const c=node.children[k], li=document.createElement('li'); ul.appendChild(li);
+          if(c.children){
+            const btn=document.createElement('button'); btn.className='toggle'; btn.textContent='▾';
+            const div=document.createElement('div');
+            btn.onclick=()=>{
+              div.classList.toggle('hidden');
+              btn.textContent=div.classList.contains('hidden')?'▸':'▾';
+            };
+            li.appendChild(btn); li.appendChild(document.createTextNode(k)); li.appendChild(div);
+            rec(c,div);
+          } else {
+            const a=document.createElement('a'); a.className='link'; a.textContent=c.page.title; a.href='#';
+            a.onclick=e=>{e.preventDefault();loadPage(c.page.path);};
+            li.appendChild(a);
+          }
+        });
+      })(root,nav);
+    }
+    const show=mode=>{
+      $('#view').style.display=mode==='view'?'block':'none';
+      $('#editor-box').style.display=mode==='edit'?'block':'none';
+    };
+
+    function loadPage(path){
+      const pg=wikiData.pages.find(p=>p.path===path); if(!pg) return;
+      currentPath=path; $('#view-title').textContent=pg.title;
+      $('#view-content').innerHTML=DOMPurify.sanitize(marked.parse(contentFromHist(pg)));
+      show('view');
+    }
+    function editCurrent(){
+      const pg=wikiData.pages.find(p=>p.path===currentPath); if(!pg) return;
+      $('#path-input').value=pg.path; $('#editor').value=contentFromHist(pg);
+      updatePrev(); show('edit');
+    }
+    async function savePage(){
+      const path=$('#path-input').value.trim(); if(!path) return;
+      const txt=$('#editor').value; let pg=wikiData.pages.find(p=>p.path===path);
+      if(pg){
+        const old=contentFromHist(pg); if(old===txt){show('view');return;}
+        pg.history.push({date:new Date().toISOString(),patch:makePatch(old,txt),msg:'Edit'});
+      } else {
+        pg={path,title:path.split('/').pop(),history:[{date:new Date().toISOString(),patch:null,snapshot:txt,msg:'Initial'}]};
+        wikiData.pages.push(pg);
+      }
+      wikiData.pages.sort((a,b)=>a.path.localeCompare(b.path));
+      buildIndex(); await embedScripts(); buildTree(); loadPage(path);
+    }
+    async function deleteCurrent(){
+      if(!currentPath)return;
+      const idxPage=wikiData.pages.findIndex(p=>p.path===currentPath);
+      if(idxPage<0)return;
+      if(!confirm(`Delete page “${wikiData.pages[idxPage].title}”? This cannot be undone.`))return;
+      wikiData.pages.splice(idxPage,1); currentPath=null;
+      buildIndex(); await embedScripts(); buildTree();
+      if(wikiData.pages.length)loadPage(wikiData.pages[0].path);
+      else{$('#view-title').textContent='';$('#view-content').innerHTML='';}
+    }
+
+    function showHistory(){
+      const pg=wikiData.pages.find(p=>p.path===currentPath); if(!pg)return;
+      const list=$('#history-list'); list.innerHTML='';
+      pg.history.forEach((h,i)=>{
+        const div=document.createElement('div'); div.className='history-item';
+        const lbl=h.patch===null?'Initial':(h.msg||'Edit');
+        const body=h.patch===null?h.snapshot:applyPatch(contentFromHist(pg,i-1),h.patch);
+        div.innerHTML=`<strong>#${i} – ${lbl} – ${new Date(h.date).toLocaleString()}</strong>
+<button data-i="${i}" class="btn" style="float:right">Revert</button>
+<pre>${body.replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]))}</pre>`;
+        list.appendChild(div);
+      });
+      list.querySelectorAll('button').forEach(b=>b.onclick=()=>revertTo(+b.dataset.i));
+      $('#history-modal').classList.remove('hidden');
+    }
+    async function revertTo(i){
+      // confirmation before revert
+      if(!confirm(`Revert to version #${i}? This action cannot be undone.`)) {
+        return;
+      }
+      const pg=wikiData.pages.find(p=>p.path===currentPath); if(!pg)return;
+      const tgt=contentFromHist(pg,i), cur=contentFromHist(pg);
+      if(tgt===cur){alert('Already at this revision');return;}
+      pg.history.push({date:new Date().toISOString(),patch:makePatch(cur,tgt),msg:`Revert to #${i}`});
+      buildIndex(); await embedScripts();
+      $('#history-modal').classList.add('hidden');
+      loadPage(currentPath);
+    }
+
+    async function loadData(){
+      await loadEmbeddedPubKey();
+      const encScript=document.getElementById('wiki-data-enc');
+      if(encScript){
+        sessionStorage.removeItem('wiki');
+        while(true){
+          const privArm=prompt('Введите ваш PRIVATE key (armored):');
+          if(!privArm){wikiData={pages:[]};break;}
+          try{
+            const privKeyObj=await openpgp.readPrivateKey({armoredKey:privArm.trim()});
+            const pass=prompt('Введите passphrase для приватного ключа:')||'';
+            const unlocked=await openpgp.decryptKey({privateKey:privKeyObj,passphrase:pass});
+            const message=await openpgp.readMessage({armoredMessage:encScript.textContent.trim()});
+            const {data}=await openpgp.decrypt({message,decryptionKeys:unlocked,format:'utf8'});
+            wikiData=JSON.parse(data);
+            sessionStorage.setItem('wiki',JSON.stringify(wikiData));
+            break;
+          }catch(err){alert('Ошибка расшифровки: '+err.message);}
+        }
+      } else {
+        const stored=sessionStorage.getItem('wiki'),
+              dataScript=document.getElementById('wiki-data');
+        if(stored)wikiData=JSON.parse(stored);
+        else if(dataScript){wikiData=JSON.parse(dataScript.textContent);sessionStorage.setItem('wiki',JSON.stringify(wikiData));}
+        else wikiData={pages:[]};
+      }
+    }
+
+    async function embedScripts(){
+      ['wiki-data','wiki-data-enc','wiki-pubkey'].forEach(id=>{const el=document.getElementById(id);if(el)el.remove();});
+      if(pubArmor){
+        const pk=document.createElement('script');
+        pk.id='wiki-pubkey';pk.type='application/pgp-public-key';pk.textContent='\n'+pubArmor+'\n';
+        document.body.appendChild(pk);
+      }
+      const json=JSON.stringify(wikiData);
+      if(pubKey){
+        const enc=await openpgp.encrypt({message:await openpgp.createMessage({text:json}),encryptionKeys:pubKey,format:'armored'});
+        const s=document.createElement('script');
+        s.id='wiki-data-enc';s.type='application/pgp-encrypted';s.textContent='\n'+enc+'\n';
+        document.body.appendChild(s);
+        sessionStorage.removeItem('wiki');
+      } else {
+        const s=document.createElement('script');
+        s.id='wiki-data';s.type='application/json';s.textContent=json;
+        document.body.appendChild(s);
+        sessionStorage.setItem('wiki',json);
+      }
+    }
+
+    function pruneDOM(){
+      const d=document.documentElement.cloneNode(true);
+      ['#view-content','#edit-preview','#tree','textarea#editor'].forEach(sel=>{
+        const el=d.querySelector(sel);if(el)el.innerHTML='';
+      });
+      d.querySelector('#editor-box').style.display='none';
+      return '<!DOCTYPE html>'+d.outerHTML;
+    }
+    async function saveWiki(){
+      await embedScripts();
+      const html=pruneDOM();
+      if(window.showSaveFilePicker){
+        try{
+          if(!fileHandle){
+            fileHandle=await window.showSaveFilePicker({types:[{description:'HTML',accept:{'text/html':['.html']}}],suggestedName:'wiki.html'});
+          }
+          const w=await fileHandle.createWritable();await w.write(html);await w.close();alert('Saved');return;
+        }catch(e){if(e.name!=='AbortError')alert(e);}
+      }
+      const blob=new Blob([html],{type:'text/html'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+      a.href=url;a.download='wiki.html';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);
+    }
+
+    function blockWiki(){sessionStorage.clear();location.reload();}
+
+    function bindUI(){
+      $('#new-btn').onclick=()=>{$('#path-input').value='';$('#editor').value='';updatePrev();show('edit');};
+      $('#edit-btn').onclick=editCurrent;
+      $('#save-btn').onclick=savePage;
+      $('#cancel-btn').onclick=()=>show('view');
+      $('#logo').onclick=()=>loadPage(wikiData.pages[0]?.path||'');
+      $('#save-wiki').onclick=saveWiki;
+      $('#block-btn').onclick=blockWiki;
+      $('#delete-btn').onclick=deleteCurrent;
+      $('#settings-btn').onclick=()=>{$('#settings-pubkey').value=pubArmor;$('#settings-modal').classList.remove('hidden');};
+      $('#settings-save').onclick=async()=>{
+        const txt=$('#settings-pubkey').value.trim();
+        if(txt){try{pubKey=await openpgp.readKey({armoredKey:txt});pubArmor=txt;sessionStorage.setItem('pubArmor',pubArmor);}catch{alert('Invalid public key');return;}}
+        else{pubKey=null;pubArmor='';sessionStorage.removeItem('pubArmor');}
+        $('#settings-modal').classList.add('hidden');
+        await embedScripts(); await saveWiki();
+      };
+      $('#settings-cancel').onclick=()=>{$('#settings-pubkey').value=pubArmor;$('#settings-modal').classList.add('hidden');};
+      $('#fullscreen-btn').onclick=()=>$('#editor-box').classList.toggle('fullscreen');
+      // interactive preview + Ctrl+S
+      $('#editor').addEventListener('input',updatePrev);
+      $('#editor').addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='s'){e.preventDefault();savePage();}});
+      $('#search-input').addEventListener('input',renderSearch);
+      $('#search-input').addEventListener('keydown',e=>{if(e.key==='Escape')closeSearch();});
+      document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();$('#search-input').focus();}});
+      $('#history-btn').onclick=showHistory;
+      $('#history-close').onclick=()=>$('#history-modal').classList.add('hidden');
+      $('#tab-import').onclick=()=>{$('#import-section').style.display='block';$('#gen-section').style.display='none';};
+      $('#tab-gen').onclick=()=>{$('#import-section').style.display='none';$('#gen-section').style.display='block';};
+    }
+
+    document.addEventListener('DOMContentLoaded',async()=>{
+      await loadData();
+      makeToolbar();
+      buildTree();
+      buildIndex();
+      bindUI();
+      if(wikiData.pages.length)loadPage(wikiData.pages[0].path);
+      updatePrev();
+    });
+  </script>
+</body>
+</html>
