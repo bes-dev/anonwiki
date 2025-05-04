@@ -177,14 +177,14 @@
   <div id="history-modal" class="modal hidden">
     <div class="modal-box">
       <h2>Revision history</h2>
-      <div id="history-list" style="margin-top:12px;"></div>
+      <div id="history-list" style="margin-top:12px"></div>
       <div class="modal-actions">
         <button class="btn" id="history-close">Close</button>
       </div>
     </div>
   </div>
 
-  <!-- Initial wiki data -->
+  <!-- Initial wiki data with full Welcome documentation -->
   <script id="wiki-data" type="application/json">
   {
     "pages": [
@@ -195,7 +195,7 @@
           {
             "date": "2025-05-04T00:00:00Z",
             "patch": null,
-            "snapshot": "# Welcome to AnonWiki\n\n(…)",
+            "snapshot": "# Welcome to AnonWiki\n\n## Overview\n\nAnonWiki is a self-contained, client-side `wiki.html` application that works entirely offline. All content is encrypted with OpenPGP and stored in your browser or embedded in the HTML file itself. Share the file, and colleagues with the right keys see the same encrypted/wiki experience.\n\n## Features\n\n- **Offline-First**: No server required—runs fully in the browser.\n- **PGP Encryption**: Encrypt/decrypt the entire wiki with public/private keys.\n- **Search**: Full-text search with snippets (powered by Lunr.js, fallback when unavailable).\n- **Markdown Editor**: Live preview alongside editor, toolbar for common syntax.\n- **Version History**: Track edits, view diffs, and revert to previous versions.\n- **File Saving**: Export updated wiki as an HTML file.\n- **Key Management**: Import an existing public key or generate a new key pair in the browser.\n- **Keyboard Shortcuts**:\n  - `Ctrl+K` / `⌘+K`: Focus search input\n  - `Ctrl+S` / `⌘+S`: Save current page\n- **Tree Navigation**: Organize pages in folders.\n\n## Getting Started\n\n1. **Import or Generate Public Key**\n   - Settings → Import Public Key to use your existing key.\n   - Or Generate Key Pair to create a fresh key pair in-browser.\n\n2. **Load or Decrypt**\n   - Open `wiki.html`. If encrypted, you will be prompted for your private key and passphrase.\n\n3. **Edit and Create Pages**\n   - Click New Page, use the toolbar or markdown.\n   - Live preview renders as you type.\n\n4. **Search**\n   - Press `Ctrl+K`, type to search titles/content.\n   - Click a result to jump to that page.\n\n5. **Save and Share**\n   - Save Wiki exports the file, embedding encrypted data if a public key is set.\n\n6. **Clear Data**\n   - Block Wiki clears browser storage and reloads.\n\n## Support\n\nFor issues or contributions, visit the project repository. Pull requests and feedback are welcome! 😃",
             "msg": "Initial"
           }
         ]
@@ -219,326 +219,452 @@
     let lunrAvailable = true, idx = null;
     let currentPath = null, fileHandle = null;
 
+    // Load embedded or stored public key
     async function loadEmbeddedPubKey() {
       const pkScript = document.getElementById('wiki-pubkey');
       if (pkScript) {
         pubArmor = pkScript.textContent.trim();
-        try { pubKey = await openpgp.readKey({ armoredKey: pubArmor }); sessionStorage.setItem('pubArmor', pubArmor); }
-        catch { pubKey = null; }
+        try {
+          pubKey = await openpgp.readKey({ armoredKey: pubArmor });
+          sessionStorage.setItem('pubArmor', pubArmor);
+        } catch {
+          pubKey = null;
+        }
       } else {
         pubArmor = sessionStorage.getItem('pubArmor') || '';
         if (pubArmor) {
-          try { pubKey = await openpgp.readKey({ armoredKey: pubArmor }); }
-          catch { pubKey = null; }
+          try {
+            pubKey = await openpgp.readKey({ armoredKey: pubArmor });
+          } catch {
+            pubKey = null;
+          }
         }
       }
     }
 
+    // Diff/Patch utilities
     const dmp = new diff_match_patch();
-    const makePatch = (o,n) => dmp.patch_toText(dmp.patch_make(o,n));
-    const applyPatch = (b,p) => dmp.patch_apply(dmp.patch_fromText(p), b)[0];
-    function contentFromHist(page, upTo = page.history.length-1) {
-      let t = '';
-      for (let i=0;i<=upTo;i++){
+    const makePatch = (oldText, newText) => dmp.patch_toText(dmp.patch_make(oldText, newText));
+    const applyPatch = (base, patch) => dmp.patch_apply(dmp.patch_fromText(patch), base)[0];
+    function contentFromHist(page, upTo = page.history.length - 1) {
+      let text = '';
+      for (let i = 0; i <= upTo; i++) {
         const h = page.history[i];
-        t = h.patch===null ? h.snapshot : applyPatch(t,h.patch);
+        text = h.patch === null ? h.snapshot : applyPatch(text, h.patch);
       }
-      return t;
+      return text;
     }
 
+    // Build Lunr index
     function buildIndex() {
-      lunrAvailable = !window.lunrFail && typeof lunr==='function';
-      if(!lunrAvailable){ idx=null; return; }
-      idx = lunr(function(){
+      lunrAvailable = !window.lunrFail && typeof lunr === 'function';
+      if (!lunrAvailable) { idx = null; return; }
+      idx = lunr(function () {
         this.ref('path');
         this.field('title');
         this.field('body');
-        wikiData.pages.forEach(p=>
-          this.add({ path:p.path, title:p.title, body:contentFromHist(p) })
+        wikiData.pages.forEach(p =>
+          this.add({ path: p.path, title: p.title, body: contentFromHist(p) })
         );
       });
     }
 
-    function makeSnippet(text,tokens,r=45){
-      const low=text.toLowerCase(); let pos=-1;
-      tokens.forEach(tok=>{const p=low.indexOf(tok); if(p!==-1&&(pos===-1||p<pos))pos=p;});
-      if(pos===-1) return '';
-      const start=Math.max(0,pos-r), end=Math.min(text.length,pos+tokens[0].length+r);
-      let sn=text.slice(start,end);
-      tokens.forEach(tok=>{
-        const re=new RegExp(tok.replace(/[.*+?^${}()|[\\]\\]/g,'\\$&'),'gi');
-        sn=sn.replace(re,m=>`<mark>${m}</mark>`);
+    // Create snippet for search
+    function makeSnippet(text, tokens, r = 45) {
+      const low = text.toLowerCase();
+      let pos = -1;
+      tokens.forEach(tok => {
+        const p = low.indexOf(tok);
+        if (p !== -1 && (pos === -1 || p < pos)) pos = p;
       });
-      if(start>0)sn='…'+sn;
-      if(end<text.length)sn+='…';
-      return DOMPurify.sanitize(sn);
+      if (pos === -1) return '';
+      const start = Math.max(0, pos - r),
+            end = Math.min(text.length, pos + tokens[0].length + r);
+      let snip = text.slice(start, end);
+      tokens.forEach(tok => {
+        const re = new RegExp(tok.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&'), 'gi');
+        snip = snip.replace(re, m => `<mark>${m}</mark>`);
+      });
+      if (start > 0) snip = '…' + snip;
+      if (end < text.length) snip += '…';
+      return DOMPurify.sanitize(snip);
     }
 
-    function searchQuery(q){
-      const query=q.trim().toLowerCase();
-      if(!query) return [];
-      const tokens=query.split(/\s+/);
-      if(lunrAvailable){
-        try{
-          const refs=idx.search(tokens.map(t=>t+'*').join(' ')).map(r=>r.ref);
-          if(refs.length) return refs;
-        }catch{}
+    // Search logic
+    function searchQuery(q) {
+      const query = q.trim().toLowerCase();
+      if (!query) return [];
+      const tokens = query.split(/\s+/);
+      if (lunrAvailable) {
+        try {
+          const refs = idx.search(tokens.map(t => t + '*').join(' ')).map(r => r.ref);
+          if (refs.length) return refs;
+        } catch {}
       }
       return wikiData.pages
-        .filter(p=>((p.title+' '+contentFromHist(p)).toLowerCase()).includes(query))
-        .map(p=>p.path);
+        .filter(p => ((p.title + ' ' + contentFromHist(p)).toLowerCase()).includes(query))
+        .map(p => p.path);
     }
 
-    function renderSearch(){
-      const dr=$('#search-drawer'), lst=$('#search-results');
-      lst.innerHTML='';
-      const q=$('#search-input').value.trim();
-      if(!q){ dr.style.display='none'; return; }
-      const tokens=q.toLowerCase().split(/\s+/), paths=searchQuery(q);
-      if(!paths.length){
-        const li=document.createElement('li');
-        li.className='empty'; li.textContent='No results'; lst.appendChild(li);
+    function renderSearch() {
+      const dr = $('#search-drawer'), lst = $('#search-results');
+      lst.innerHTML = '';
+      const q = $('#search-input').value.trim();
+      if (!q) { dr.style.display = 'none'; return; }
+      const tokens = q.toLowerCase().split(/\s+/),
+            paths = searchQuery(q);
+      if (!paths.length) {
+        const li = document.createElement('li');
+        li.className = 'empty'; li.textContent = 'No results';
+        lst.appendChild(li);
       } else {
-        paths.forEach(path=>{
-          const pg=wikiData.pages.find(p=>p.path===path);
-          const plain=contentFromHist(pg).replace(/[`*_>#]/g,'');
-          const sn=makeSnippet(plain,tokens);
-          const li=document.createElement('li');
-          li.innerHTML=`<a href="#" style="font-weight:600">${pg.title}</a><div style="font-size:13px">${sn}</div>`;
-          li.querySelector('a').onclick=e=>{e.preventDefault();closeSearch();loadPage(path);};
+        paths.forEach(path => {
+          const pg = wikiData.pages.find(p => p.path === path);
+          const plain = contentFromHist(pg).replace(/[`*_>#]/g, '');
+          const sn = makeSnippet(plain, tokens);
+          const li = document.createElement('li');
+          li.innerHTML = `<a href="#" style="font-weight:600">${pg.title}</a>
+<div style="font-size:13px">${sn}</div>`;
+          li.querySelector('a').onclick = e => {
+            e.preventDefault(); closeSearch(); loadPage(path);
+          };
           lst.appendChild(li);
         });
       }
-      dr.style.display='block';
+      dr.style.display = 'block';
     }
-    const closeSearch=()=>{ $('#search-input').value=''; $('#search-drawer').style.display='none'; };
+    const closeSearch = () => {
+      $('#search-input').value = '';
+      $('#search-drawer').style.display = 'none';
+    };
 
-    function makeToolbar(){
-      const tb=$('#toolbar');
+    // Toolbar buttons
+    function makeToolbar() {
+      const tb = $('#toolbar');
       [['B','**$**'],['I','*$*'],['H2','## $'],['Link','[$](url)'],['Img','![$](url)'],
        ['UL','- $'],['OL','1. $'],['Code','```\n$\n```'],['Quote','> $'],['HR','\n---\n']]
-        .forEach(([lbl,tpl])=>{
-          const b=document.createElement('button');
-          b.textContent=lbl; b.onclick=()=>ins(tpl); tb.appendChild(b);
+        .forEach(([lbl, tpl]) => {
+          const b = document.createElement('button');
+          b.textContent = lbl;
+          b.onclick = () => ins(tpl);
+          tb.appendChild(b);
         });
     }
-    function ins(tpl){
-      const ta=$('#editor'), s=ta.selectionStart, e=ta.selectionEnd;
-      ta.setRangeText(tpl.replace('$',ta.value.slice(s,e)||''),s,e,'end'); ta.focus(); updatePrev();
+    function ins(tpl) {
+      const ta = $('#editor'), s = ta.selectionStart, e = ta.selectionEnd;
+      ta.setRangeText(tpl.replace('$', ta.value.slice(s, e) || ''), s, e, 'end');
+      ta.focus(); updatePrev();
     }
-    const updatePrev=()=>{ $('#edit-preview').innerHTML = DOMPurify.sanitize(marked.parse($('#editor').value)); };
+    const updatePrev = () => {
+      $('#edit-preview').innerHTML = DOMPurify.sanitize(marked.parse($('#editor').value));
+    };
 
-    function buildTree(){
-      const root={},nav=$('#tree'); nav.innerHTML='';
-      wikiData.pages.forEach(p=>{
-        p.path.split('/').reduce((n,part,i,arr)=>{
-          n.children=n.children||{}; n=n.children[part]=n.children[part]||{};
-          if(i===arr.length-1) n.page=p; return n;
-        },root);
-      });
-      (function rec(node,el){
-        const ul=document.createElement('ul'); el.appendChild(ul);
-        Object.keys(node.children||{}).sort().forEach(k=>{
-          const c=node.children[k], li=document.createElement('li'); ul.appendChild(li);
-          if(c.children){
-            const btn=document.createElement('button'); btn.className='toggle'; btn.textContent='▾';
-            const div=document.createElement('div');
-            btn.onclick=()=>{
+    // Build sidebar tree
+    function buildTree() {
+      const root = {}, nav = $('#tree');
+      nav.innerHTML = '';
+      wikiData.pages.forEach(p =>
+        p.path.split('/').reduce((n, part, i, arr) => {
+          n.children = n.children || {};
+          n = n.children[part] = n.children[part] || {};
+          if (i === arr.length - 1) n.page = p;
+          return n;
+        }, root)
+      );
+      (function rec(node, el) {
+        const ul = document.createElement('ul');
+        el.appendChild(ul);
+        Object.keys(node.children || {}).sort().forEach(k => {
+          const c = node.children[k], li = document.createElement('li');
+          ul.appendChild(li);
+          if (c.children) {
+            const btn = document.createElement('button');
+            btn.className = 'toggle'; btn.textContent = '▾';
+            const div = document.createElement('div');
+            btn.onclick = () => {
               div.classList.toggle('hidden');
-              btn.textContent=div.classList.contains('hidden')?'▸':'▾';
+              btn.textContent = div.classList.contains('hidden') ? '▸' : '▾';
             };
-            li.appendChild(btn); li.appendChild(document.createTextNode(k)); li.appendChild(div);
-            rec(c,div);
+            li.appendChild(btn);
+            li.appendChild(document.createTextNode(k));
+            li.appendChild(div);
+            rec(c, div);
           } else {
-            const a=document.createElement('a'); a.className='link'; a.textContent=c.page.title; a.href='#';
-            a.onclick=e=>{e.preventDefault();loadPage(c.page.path);};
+            const a = document.createElement('a');
+            a.className = 'link'; a.textContent = c.page.title; a.href = '#';
+            a.onclick = e => { e.preventDefault(); loadPage(c.page.path); };
             li.appendChild(a);
           }
         });
-      })(root,nav);
+      })(root, nav);
     }
-    const show=mode=>{
-      $('#view').style.display=mode==='view'?'block':'none';
-      $('#editor-box').style.display=mode==='edit'?'block':'none';
+    const show = mode => {
+      $('#view').style.display = mode === 'view' ? 'block' : 'none';
+      $('#editor-box').style.display = mode === 'edit' ? 'block' : 'none';
     };
 
-    function loadPage(path){
-      const pg=wikiData.pages.find(p=>p.path===path); if(!pg) return;
-      currentPath=path; $('#view-title').textContent=pg.title;
-      $('#view-content').innerHTML=DOMPurify.sanitize(marked.parse(contentFromHist(pg)));
+    // Page operations
+    function loadPage(path) {
+      const pg = wikiData.pages.find(p => p.path === path);
+      if (!pg) return;
+      currentPath = path;
+      $('#view-title').textContent = pg.title;
+      $('#view-content').innerHTML = DOMPurify.sanitize(marked.parse(contentFromHist(pg)));
       show('view');
     }
-    function editCurrent(){
-      const pg=wikiData.pages.find(p=>p.path===currentPath); if(!pg) return;
-      $('#path-input').value=pg.path; $('#editor').value=contentFromHist(pg);
+    function editCurrent() {
+      const pg = wikiData.pages.find(p => p.path === currentPath);
+      if (!pg) return;
+      $('#path-input').value = pg.path;
+      $('#editor').value = contentFromHist(pg);
       updatePrev(); show('edit');
     }
-    async function savePage(){
-      const path=$('#path-input').value.trim(); if(!path) return;
-      const txt=$('#editor').value; let pg=wikiData.pages.find(p=>p.path===path);
-      if(pg){
-        const old=contentFromHist(pg); if(old===txt){show('view');return;}
-        pg.history.push({date:new Date().toISOString(),patch:makePatch(old,txt),msg:'Edit'});
+    async function savePage() {
+      const path = $('#path-input').value.trim();
+      if (!path) return;
+      const txt = $('#editor').value;
+      let pg = wikiData.pages.find(p => p.path === path);
+      if (pg) {
+        const old = contentFromHist(pg);
+        if (old === txt) { show('view'); return; }
+        pg.history.push({ date: new Date().toISOString(), patch: makePatch(old, txt), msg: 'Edit' });
       } else {
-        pg={path,title:path.split('/').pop(),history:[{date:new Date().toISOString(),patch:null,snapshot:txt,msg:'Initial'}]};
+        pg = {
+          path,
+          title: path.split('/').pop(),
+          history: [{ date: new Date().toISOString(), patch: null, snapshot: txt, msg: 'Initial' }]
+        };
         wikiData.pages.push(pg);
       }
-      wikiData.pages.sort((a,b)=>a.path.localeCompare(b.path));
+      wikiData.pages.sort((a, b) => a.path.localeCompare(b.path));
       buildIndex(); await embedScripts(); buildTree(); loadPage(path);
     }
-    async function deleteCurrent(){
-      if(!currentPath)return;
-      const idxPage=wikiData.pages.findIndex(p=>p.path===currentPath);
-      if(idxPage<0)return;
-      if(!confirm(`Delete page “${wikiData.pages[idxPage].title}”? This cannot be undone.`))return;
-      wikiData.pages.splice(idxPage,1); currentPath=null;
+    async function deleteCurrent() {
+      if (!currentPath) return;
+      const idxPage = wikiData.pages.findIndex(p => p.path === currentPath);
+      if (idxPage < 0) return;
+      if (!confirm(`Delete page “${wikiData.pages[idxPage].title}”? This cannot be undone.`)) return;
+      wikiData.pages.splice(idxPage, 1);
+      currentPath = null;
       buildIndex(); await embedScripts(); buildTree();
-      if(wikiData.pages.length)loadPage(wikiData.pages[0].path);
-      else{$('#view-title').textContent='';$('#view-content').innerHTML='';}
+      if (wikiData.pages.length) loadPage(wikiData.pages[0].path);
+      else { $('#view-title').textContent = ''; $('#view-content').innerHTML = ''; }
     }
 
-    function showHistory(){
-      const pg=wikiData.pages.find(p=>p.path===currentPath); if(!pg)return;
-      const list=$('#history-list'); list.innerHTML='';
-      pg.history.forEach((h,i)=>{
-        const div=document.createElement('div'); div.className='history-item';
-        const lbl=h.patch===null?'Initial':(h.msg||'Edit');
-        const body=h.patch===null?h.snapshot:applyPatch(contentFromHist(pg,i-1),h.patch);
-        div.innerHTML=`<strong>#${i} – ${lbl} – ${new Date(h.date).toLocaleString()}</strong>
+    // History
+    function showHistory() {
+      const pg = wikiData.pages.find(p => p.path === currentPath);
+      if (!pg) return;
+      const list = $('#history-list');
+      list.innerHTML = '';
+      pg.history.forEach((h, i) => {
+        const div = document.createElement('div');
+        div.className = 'history-item';
+        const lbl = h.patch === null ? 'Initial' : (h.msg || 'Edit');
+        const body = h.patch === null ? h.snapshot : applyPatch(contentFromHist(pg, i - 1), h.patch);
+        div.innerHTML = `<strong>#${i} – ${lbl} – ${new Date(h.date).toLocaleString()}</strong>
 <button data-i="${i}" class="btn" style="float:right">Revert</button>
-<pre>${body.replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]))}</pre>`;
+<pre>${body.replace(/[&<>]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]))}</pre>`;
         list.appendChild(div);
       });
-      list.querySelectorAll('button').forEach(b=>b.onclick=()=>revertTo(+b.dataset.i));
+      list.querySelectorAll('button').forEach(b => b.onclick = () => revertTo(+b.dataset.i));
       $('#history-modal').classList.remove('hidden');
     }
-    async function revertTo(i){
-      // confirmation before revert
-      if(!confirm(`Revert to version #${i}? This action cannot be undone.`)) {
-        return;
-      }
-      const pg=wikiData.pages.find(p=>p.path===currentPath); if(!pg)return;
-      const tgt=contentFromHist(pg,i), cur=contentFromHist(pg);
-      if(tgt===cur){alert('Already at this revision');return;}
-      pg.history.push({date:new Date().toISOString(),patch:makePatch(cur,tgt),msg:`Revert to #${i}`});
+    async function revertTo(i) {
+      if (!confirm(`Revert to version #${i}? This action cannot be undone.`)) return;
+      const pg = wikiData.pages.find(p => p.path === currentPath);
+      if (!pg) return;
+      const tgt = contentFromHist(pg, i), cur = contentFromHist(pg);
+      if (tgt === cur) { alert('Already at this revision'); return; }
+      pg.history.push({ date: new Date().toISOString(), patch: makePatch(cur, tgt), msg: `Revert to #${i}` });
       buildIndex(); await embedScripts();
       $('#history-modal').classList.add('hidden');
       loadPage(currentPath);
     }
 
-    async function loadData(){
+    // Load & decrypt data
+    async function loadData() {
       await loadEmbeddedPubKey();
-      const encScript=document.getElementById('wiki-data-enc');
-      if(encScript){
+      const encScript = document.getElementById('wiki-data-enc');
+      if (encScript) {
         sessionStorage.removeItem('wiki');
-        while(true){
-          const privArm=prompt('Введите ваш PRIVATE key (armored):');
-          if(!privArm){wikiData={pages:[]};break;}
-          try{
-            const privKeyObj=await openpgp.readPrivateKey({armoredKey:privArm.trim()});
-            const pass=prompt('Введите passphrase для приватного ключа:')||'';
-            const unlocked=await openpgp.decryptKey({privateKey:privKeyObj,passphrase:pass});
-            const message=await openpgp.readMessage({armoredMessage:encScript.textContent.trim()});
-            const {data}=await openpgp.decrypt({message,decryptionKeys:unlocked,format:'utf8'});
-            wikiData=JSON.parse(data);
-            sessionStorage.setItem('wiki',JSON.stringify(wikiData));
+        while (true) {
+          const privArm = prompt('Введите ваш PRIVATE key (armored):');
+          if (!privArm) { wikiData = { pages: [] }; break; }
+          try {
+            const privKeyObj = await openpgp.readPrivateKey({ armoredKey: privArm.trim() });
+            const pass = prompt('Введите passphrase для приватного ключа:') || '';
+            const unlocked = await openpgp.decryptKey({ privateKey: privKeyObj, passphrase: pass });
+            const message = await openpgp.readMessage({ armoredMessage: encScript.textContent.trim() });
+            const { data } = await openpgp.decrypt({ message, decryptionKeys: unlocked, format: 'utf8' });
+            wikiData = JSON.parse(data);
+            sessionStorage.setItem('wiki', JSON.stringify(wikiData));
             break;
-          }catch(err){alert('Ошибка расшифровки: '+err.message);}
+          } catch (err) {
+            alert('Ошибка расшифровки: ' + err.message);
+          }
         }
       } else {
-        const stored=sessionStorage.getItem('wiki'),
-              dataScript=document.getElementById('wiki-data');
-        if(stored)wikiData=JSON.parse(stored);
-        else if(dataScript){wikiData=JSON.parse(dataScript.textContent);sessionStorage.setItem('wiki',JSON.stringify(wikiData));}
-        else wikiData={pages:[]};
+        const stored = sessionStorage.getItem('wiki'),
+              dataScript = document.getElementById('wiki-data');
+        if (stored) wikiData = JSON.parse(stored);
+        else if (dataScript) {
+          wikiData = JSON.parse(dataScript.textContent);
+          sessionStorage.setItem('wiki', JSON.stringify(wikiData));
+        } else {
+          wikiData = { pages: [] };
+        }
       }
     }
 
-    async function embedScripts(){
-      ['wiki-data','wiki-data-enc','wiki-pubkey'].forEach(id=>{const el=document.getElementById(id);if(el)el.remove();});
-      if(pubArmor){
-        const pk=document.createElement('script');
-        pk.id='wiki-pubkey';pk.type='application/pgp-public-key';pk.textContent='\n'+pubArmor+'\n';
+    // Embed scripts & encrypt
+    async function embedScripts() {
+      ['wiki-data','wiki-data-enc','wiki-pubkey'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.remove();
+      });
+      if (pubArmor) {
+        const pk = document.createElement('script');
+        pk.id = 'wiki-pubkey';
+        pk.type = 'application/pgp-public-key';
+        pk.textContent = '\n' + pubArmor + '\n';
         document.body.appendChild(pk);
       }
-      const json=JSON.stringify(wikiData);
-      if(pubKey){
-        const enc=await openpgp.encrypt({message:await openpgp.createMessage({text:json}),encryptionKeys:pubKey,format:'armored'});
-        const s=document.createElement('script');
-        s.id='wiki-data-enc';s.type='application/pgp-encrypted';s.textContent='\n'+enc+'\n';
+      const json = JSON.stringify(wikiData);
+      if (pubKey) {
+        const enc = await openpgp.encrypt({
+          message: await openpgp.createMessage({ text: json }),
+          encryptionKeys: pubKey,
+          format: 'armored'
+        });
+        const s = document.createElement('script');
+        s.id = 'wiki-data-enc';
+        s.type = 'application/pgp-encrypted';
+        s.textContent = '\n' + enc + '\n';
         document.body.appendChild(s);
         sessionStorage.removeItem('wiki');
       } else {
-        const s=document.createElement('script');
-        s.id='wiki-data';s.type='application/json';s.textContent=json;
+        const s = document.createElement('script');
+        s.id = 'wiki-data';
+        s.type = 'application/json';
+        s.textContent = json;
         document.body.appendChild(s);
-        sessionStorage.setItem('wiki',json);
+        sessionStorage.setItem('wiki', json);
       }
     }
 
-    function pruneDOM(){
-      const d=document.documentElement.cloneNode(true);
-      ['#view-content','#edit-preview','#tree','textarea#editor'].forEach(sel=>{
-        const el=d.querySelector(sel);if(el)el.innerHTML='';
+    // Prune DOM before saving
+    function pruneDOM() {
+      const d = document.documentElement.cloneNode(true);
+      ['#view-content','#edit-preview','#tree','textarea#editor'].forEach(sel => {
+        const el = d.querySelector(sel);
+        if (el) el.innerHTML = '';
       });
-      d.querySelector('#editor-box').style.display='none';
-      return '<!DOCTYPE html>'+d.outerHTML;
+      d.querySelector('#editor-box').style.display = 'none';
+      return '<!DOCTYPE html>' + d.outerHTML;
     }
-    async function saveWiki(){
+
+    // Save wiki
+    async function saveWiki() {
       await embedScripts();
-      const html=pruneDOM();
-      if(window.showSaveFilePicker){
-        try{
-          if(!fileHandle){
-            fileHandle=await window.showSaveFilePicker({types:[{description:'HTML',accept:{'text/html':['.html']}}],suggestedName:'wiki.html'});
+      const html = pruneDOM();
+      if (window.showSaveFilePicker) {
+        try {
+          if (!fileHandle) {
+            fileHandle = await window.showSaveFilePicker({
+              types: [{ description: 'HTML', accept: { 'text/html': ['.html'] } }],
+              suggestedName: 'wiki.html'
+            });
           }
-          const w=await fileHandle.createWritable();await w.write(html);await w.close();alert('Saved');return;
-        }catch(e){if(e.name!=='AbortError')alert(e);}
+          const w = await fileHandle.createWritable();
+          await w.write(html);
+          await w.close();
+          alert('Saved');
+          return;
+        } catch (e) {
+          if (e.name !== 'AbortError') alert(e);
+        }
       }
-      const blob=new Blob([html],{type:'text/html'}),url=URL.createObjectURL(blob),a=document.createElement('a');
-      a.href=url;a.download='wiki.html';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'wiki.html'; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
     }
 
-    function blockWiki(){sessionStorage.clear();location.reload();}
+    function blockWiki() {
+      sessionStorage.clear();
+      location.reload();
+    }
 
-    function bindUI(){
-      $('#new-btn').onclick=()=>{$('#path-input').value='';$('#editor').value='';updatePrev();show('edit');};
-      $('#edit-btn').onclick=editCurrent;
-      $('#save-btn').onclick=savePage;
-      $('#cancel-btn').onclick=()=>show('view');
-      $('#logo').onclick=()=>loadPage(wikiData.pages[0]?.path||'');
-      $('#save-wiki').onclick=saveWiki;
-      $('#block-btn').onclick=blockWiki;
-      $('#delete-btn').onclick=deleteCurrent;
-      $('#settings-btn').onclick=()=>{$('#settings-pubkey').value=pubArmor;$('#settings-modal').classList.remove('hidden');};
-      $('#settings-save').onclick=async()=>{
-        const txt=$('#settings-pubkey').value.trim();
-        if(txt){try{pubKey=await openpgp.readKey({armoredKey:txt});pubArmor=txt;sessionStorage.setItem('pubArmor',pubArmor);}catch{alert('Invalid public key');return;}}
-        else{pubKey=null;pubArmor='';sessionStorage.removeItem('pubArmor');}
-        $('#settings-modal').classList.add('hidden');
-        await embedScripts(); await saveWiki();
+    // Bind UI events
+    function bindUI() {
+      $('#new-btn').onclick = () => { $('#path-input').value = ''; $('#editor').value = ''; updatePrev(); show('edit'); };
+      $('#edit-btn').onclick = editCurrent;
+      $('#save-btn').onclick = savePage;
+      $('#cancel-btn').onclick = () => show('view');
+      $('#logo').onclick = () => loadPage(wikiData.pages[0]?.path || '');
+      $('#save-wiki').onclick = saveWiki;
+      $('#block-btn').onclick = blockWiki;
+      $('#delete-btn').onclick = deleteCurrent;
+      $('#settings-btn').onclick = () => {
+        $('#settings-pubkey').value = pubArmor;
+        $('#settings-modal').classList.remove('hidden');
       };
-      $('#settings-cancel').onclick=()=>{$('#settings-pubkey').value=pubArmor;$('#settings-modal').classList.add('hidden');};
-      $('#fullscreen-btn').onclick=()=>$('#editor-box').classList.toggle('fullscreen');
-      // interactive preview + Ctrl+S
-      $('#editor').addEventListener('input',updatePrev);
-      $('#editor').addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='s'){e.preventDefault();savePage();}});
-      $('#search-input').addEventListener('input',renderSearch);
-      $('#search-input').addEventListener('keydown',e=>{if(e.key==='Escape')closeSearch();});
-      document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();$('#search-input').focus();}});
-      $('#history-btn').onclick=showHistory;
-      $('#history-close').onclick=()=>$('#history-modal').classList.add('hidden');
-      $('#tab-import').onclick=()=>{$('#import-section').style.display='block';$('#gen-section').style.display='none';};
-      $('#tab-gen').onclick=()=>{$('#import-section').style.display='none';$('#gen-section').style.display='block';};
+      $('#settings-save').onclick = async () => {
+        const txt = $('#settings-pubkey').value.trim();
+        if (txt) {
+          try {
+            pubKey = await openpgp.readKey({ armoredKey: txt });
+            pubArmor = txt;
+            sessionStorage.setItem('pubArmor', pubArmor);
+          } catch {
+            alert('Invalid public key');
+            return;
+          }
+        } else {
+          pubKey = null;
+          pubArmor = '';
+          sessionStorage.removeItem('pubArmor');
+        }
+        $('#settings-modal').classList.add('hidden');
+        await embedScripts();
+        await saveWiki();
+      };
+      $('#settings-cancel').onclick = () => {
+        $('#settings-pubkey').value = pubArmor;
+        $('#settings-modal').classList.add('hidden');
+      };
+      $('#fullscreen-btn').onclick = () => $('#editor-box').classList.toggle('fullscreen');
+      $('#editor').addEventListener('input', updatePrev);
+      $('#editor').addEventListener('keydown', e => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); savePage(); }
+      });
+      $('#search-input').addEventListener('input', renderSearch);
+      $('#search-input').addEventListener('keydown', e => { if (e.key === 'Escape') closeSearch(); });
+      document.addEventListener('keydown', e => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); $('#search-input').focus(); }
+      });
+      $('#history-btn').onclick = showHistory;
+      $('#history-close').onclick = () => $('#history-modal').classList.add('hidden');
+      $('#tab-import').onclick = () => {
+        $('#import-section').style.display = 'block';
+        $('#gen-section').style.display = 'none';
+      };
+      $('#tab-gen').onclick = () => {
+        $('#import-section').style.display = 'none';
+        $('#gen-section').style.display = 'block';
+      };
     }
 
-    document.addEventListener('DOMContentLoaded',async()=>{
+    // Initialization
+    document.addEventListener('DOMContentLoaded', async () => {
       await loadData();
       makeToolbar();
       buildTree();
       buildIndex();
       bindUI();
-      if(wikiData.pages.length)loadPage(wikiData.pages[0].path);
+      if (wikiData.pages.length) loadPage(wikiData.pages[0].path);
       updatePrev();
     });
   </script>
