@@ -110,6 +110,7 @@ anonwiki.html
 ├─ <script src="openpgp.min.js">       # PGP encryption library
 ├─ <script src="diff_match_patch.js">  # Patch/diff engine
 └─ <script> …JavaScript core… </script> # All interactive logic
+```
 
 ---
 
